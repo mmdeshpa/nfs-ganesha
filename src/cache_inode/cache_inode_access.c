@@ -51,21 +51,21 @@
 
 #define LogDebugCIA(comp1, comp2, format, args...) \
 	do { \
-		if (unlikely(LogComponents[comp1].comp_log_level >= \
+		struct per_client_logging *logClient = pthread_getspecific(clientIP); \
+		if (unlikely(logClient->LogComponents[comp1].comp_log_level >= \
 			     NIV_FULL_DEBUG) || \
-		    unlikely(LogComponents[comp2].comp_log_level >= \
+		    unlikely(logClient->LogComponents[comp2].comp_log_level >= \
 			     NIV_DEBUG)) { \
 			log_components_t component = \
-				LogComponents[comp1].comp_log_level >= \
+				logClient->LogComponents[comp1].comp_log_level >= \
 				NIV_DEBUG ? comp1 : comp2; \
-			DisplayLogComponentLevel( \
-				component, \
+			DisplayLogComponentLevel(component, \
 				(char *) __FILE__, \
 				__LINE__, \
 				(char *) __func__, \
 				NIV_DEBUG, \
 				"%s: DEBUG: " format, \
-				LogComponents[component].comp_str, ## args); \
+				logClient->LogComponents[component].comp_str, ## args); \
 		} \
 	} while (0)
 

@@ -75,7 +75,6 @@
 #endif
 #include "uid2grp.h"
 
-
 /* global information exported to all layers (as extern vars) */
 nfs_parameter_t nfs_param = {
 	/* Core parameters */
@@ -387,12 +386,13 @@ void nfs_prereq_init(char *program_name, char *host_name, int debug_level,
 
 	InitLogging();
 	if (log_path)
-		SetDefaultLogging(log_path);
+		SetDefaultLogging(default_node, log_path);
 
 	if (debug_level >= 0)
-		SetLevelDebug(debug_level);
+		SetLevelDebug(default_node, debug_level);
 
-	ReadLogEnvironment();
+	// Poornima mentioned that we need to remove this. 
+//	ReadLogEnvironment();
 
 	/* Register error families */
 	AddFamilyError(ERR_POSIX, "POSIX Errors", tab_systeme_status);
@@ -442,8 +442,8 @@ void nfs_print_param_config()
 	printf("\tDecoder_Fridge_Block_Timeout = %" PRIu64 " ;\n",
 	       nfs_param.core_param.decoder_fridge_block_timeout);
 
-	printf("\tManage_Gids_Expiration = %" PRIu64 " ;\n",
-	       nfs_param.core_param.manage_gids_expiration);
+        printf("\tManage_Gids_Expiration = %" PRIu64 " ;\n",
+               nfs_param.core_param.manage_gids_expiration);
 
 	if (nfs_param.core_param.drop_io_errors)
 		printf("\tDrop_IO_Errors = true ;\n");
@@ -794,8 +794,8 @@ static void nfs_Init(const nfs_start_info_t *p_start_info)
 	dbus_client_init();
 #endif
 #endif
-	/* init uid2grp cache */
-	uid2grp_cache_init();
+        /* init uid2grp cache */
+        uid2grp_cache_init();
 
 	/* Cache Inode Initialisation */
 	cache_status = cache_inode_init();
@@ -1032,7 +1032,6 @@ static void nfs_Init(const nfs_start_info_t *p_start_info)
 	LogDebug(COMPONENT_INIT, "Now building pseudo fs");
 
 	create_pseudofs();
-
 	LogInfo(COMPONENT_INIT,
 		"NFSv4 pseudo file system successfully initialized");
 

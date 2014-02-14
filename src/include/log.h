@@ -73,6 +73,15 @@
 #define LOG_BUFF_LEN 2048
 #define STR_LEN 256
 
+
+/* Define the maximum length of a user time/date format. */
+#define MAX_TD_USER_LEN 64
+/* Define the maximum overall time/date format length, should have room for both
+ * user date and user time format plus room for blanks around them.
+ */
+#define MAX_TD_FMT_LEN (MAX_TD_USER_LEN * 2 + 4)
+
+
 /*
  * Log message severity constants
  */
@@ -144,6 +153,33 @@ typedef enum log_components {
 	COMPONENT_DBUS,
 	COMPONENT_COUNT
 } log_components_t;
+
+/**
+ * @brief Define an index each of the log fields that are configurable.
+ *
+ * Ganesha log messages have several "header" fields used in every
+ * message. Some of those fields may be configured (mostly display or
+ * not display).
+ *
+ */
+enum log_flag_index_t {
+	LF_DATE = 0,		/*< Date field. */
+	LF_TIME,		/*< Time field. */
+	LF_EPOCH,		/*< Server Epoch field (distinguishes server
+				    instance. */
+	LF_HOSTAME,		/*< Server host name field. */
+	LF_PROGNAME,		/*< Ganesha program name field. */
+	LF_PID,			/*< Ganesha process identifier. */
+	LF_THREAD_NAME,		/*< Name of active thread logging message. */
+	LF_FILE_NAME,		/*< Source file name message occured in. */
+	LF_LINE_NUM,		/*< Source line number message occurred in. */
+	LF_FUNCTION_NAME,	/*< Function name message occurred in. */
+	LF_COMPONENT,		/*< Log component. */
+	LF_LEVEL,		/*< Log level. */
+	LF_IP,			/*< Client's IP Address. */
+	LF_COUNT		/*< Total number of FLAGs */
+};
+
 
 typedef struct loglev {
 	log_levels_t value;
@@ -312,71 +348,20 @@ static status_t __attribute__ ((__unused__)) tab_systeme_status[] = {
 #define ERR_FSAL          13
 #define ERR_CACHE_INODE   16
 
+/* Define max number of clients for the array.
+ * 31 because 31 is a prime and can be used for hashing.  */
+#define MAX_CLIENTS 31
+
+
+/* Define max facilities */
+#define MAX_FACILITIES 5
+
 /* previously at log_macros.h */
 typedef void (*cleanup_function) (void);
 typedef struct cleanup_list_element {
 	struct cleanup_list_element *next;
 	cleanup_function clean;
 } cleanup_list_element;
-
-/* Allocates buffer containing debug info to be printed.
- * Returned buffer needs to be freed. Returns number of
- * characeters in size if size != NULL.
- */
-char *get_debug_info(int *size);
-
-/* Function prototypes */
-
-void SetNamePgm(const char *nom);
-void SetNameHost(const char *nom);
-void SetDefaultLogging(const char *name);
-void SetNameFunction(const char *nom);	/* thread safe */
-
-/* AddFamilyError : not thread safe */
-int AddFamilyError(int num_family, char *nom_family, family_error_t *tab_err);
-
-char *ReturnNameFamilyError(int num_family);
-
-void InitLogging();
-void ReadLogEnvironment();
-void SetLevelDebug(int level_to_set);
-void Log_FreeThreadContext();
-
-int ReturnLevelAscii(const char *LevelInAscii);
-char *ReturnLevelInt(int level);
-
-int display_LogError(struct display_buffer *dspbuf, int num_family,
-		     int num_error, int status);
-
-static inline void MakeLogError(char *buffer, size_t size, int num_family,
-				int num_error, int status, int line)
-{
-	struct display_buffer dspbuf = { size, buffer, buffer };
-	(void)display_LogError(&dspbuf, num_family, num_error, status);
-}
-
-/* previously at log_macros.h */
-void RegisterCleanup(cleanup_list_element *clean);
-void Cleanup(void);
-void Fatal(void);
-
-/* This function is primarily for setting log level from config, it will
- * not override log level set from environment.
- */
-void SetComponentLogLevel(log_components_t component, int level_to_set);
-
-void DisplayLogComponentLevel(log_components_t component, char *file, int line,
-			      char *function, log_levels_t level, char *format,
-			      ...)
-			      __attribute__ ((format(printf, 6, 7)));
-			      /* 6=format 7=params */
-
-void DisplayErrorComponentLogLine(log_components_t component, char *file,
-				  int line, char *function, int num_family,
-				  int num_error, int status);
-
-int read_log_config(config_file_t in_config);
-void reread_log_config();
 
 typedef enum log_type {
 	SYSLOG = 0,
@@ -413,12 +398,6 @@ struct log_facility {
 	void *lf_private;	/*< Private info for facility          */
 };
 
-void deactivate_log_facility(struct log_facility *facility);
-void activate_log_facility(struct log_facility *facility);
-int register_log_facility(struct log_facility *facility);
-int unregister_log_facility(struct log_facility *facility);
-int activate_custom_log_facility(struct log_facility *facility);
-void set_const_log_str();
 
 typedef struct log_component_info {
 	log_components_t comp_value;
@@ -428,14 +407,137 @@ typedef struct log_component_info {
 	int comp_env_set;
 } log_component_info;
 
+/**
+ * @brief Description of a flag tha controls a log field.
+ *
+ */
+struct log_flag {
+        int lf_idx;             /*< The log field index this flag controls. */
+        int lf_val;          /*< True/False value for the flag. */
+        int lf_ext;             /*< Extended value for the flag,
+                                    if it has one. */
+        char *lf_name;          /*< Name of the flag. */
+};
+
+
+
+
+/* This structure will be the defining point of all the information about client specific settings. */
+typedef struct per_client_logging {
+        /* this would declare the array of components for the specified IP.  */
+        struct log_component_info LogComponents[COMPONENT_COUNT];
+        
+        /* Flags associated with the logs. */
+        struct log_flag tab_log_flag[LF_COUNT];
+        
+        /* Define a const string. */
+        char const_log_str[LOG_BUFF_LEN];
+        char date_time_fmt[MAX_TD_FMT_LEN];
+        char user_date_fmt[MAX_TD_USER_LEN];
+        char user_time_fmt[MAX_TD_USER_LEN];
+        
+        /* Create a log facilities structure specific to clients. */
+        struct log_facility facilities[MAX_FACILITIES];
+        
+        /* IP of the configured client. Set to NULL for the first node.  */
+        char *ip;
+        
+        /* The next pointer of the linked list */
+        struct per_client_logging *next;
+        
+        /* The next pointer in case of collision */
+        struct per_client_logging *collision_next;
+        
+        /* The list of facilities. */
+        struct glist_head facility_list;
+        
+        /* The list of active facilities */
+        struct glist_head active_facility_list;
+
+}client_t;
+
+/* Allocates buffer containing debug info to be printed.
+ * Returned buffer needs to be freed. Returns number of
+ * characeters in size if size != NULL.
+ */
+char *get_debug_info(int *size);
+
+/* Function prototypes */
+
+void SetNamePgm(const char *nom);
+void SetNameHost(const char *nom);
+void SetDefaultLogging(struct per_client_logging *logClient, const char *name);
+void SetNameFunction(const char *nom);	/* thread safe */
+
+/* AddFamilyError : not thread safe */
+int AddFamilyError(int num_family, char *nom_family, family_error_t *tab_err);
+
+char *ReturnNameFamilyError(int num_family);
+
+void InitLogging();
+/*void ReadLogEnvironment(); */
+void SetLevelDebug(struct per_client_logging *logClient, int level_to_set);
+void Log_FreeThreadContext();
+void init_node (struct per_client_logging **logClient);
+int ReturnLevelAscii(const char *LevelInAscii);
+char *ReturnLevelInt(int level);
+
+int display_LogError(struct display_buffer *dspbuf, int num_family,
+		     int num_error, int status);
+
+static inline void MakeLogError(char *buffer, size_t size, int num_family,
+				int num_error, int status, int line)
+{
+	struct display_buffer dspbuf = { size, buffer, buffer };
+	(void)display_LogError(&dspbuf, num_family, num_error, status);
+}
+
+/* previously at log_macros.h */
+void RegisterCleanup(cleanup_list_element *clean);
+void Cleanup(void);
+void Fatal(void);
+
+/* This function is primarily for setting log level from config, it will
+ * not override log level set from environment.
+ */
+void SetComponentLogLevel(struct per_client_logging *logClient, log_components_t component, int level_to_set);
+
+void DisplayLogComponentLevel(log_components_t component, char *file, int line,
+			      char *function, log_levels_t level, char *format,
+			      ...)
+			      __attribute__ ((format(printf, 6, 7)));
+			      /* 6=format 7=params */
+
+void DisplayErrorComponentLogLine(log_components_t component, char *file,
+				  int line, char *function, int num_family,
+				  int num_error, int status);
+
+int read_log_config(config_file_t in_config);
+void reread_log_config();
+
+void deactivate_log_facility(struct per_client_logging *logClient, struct log_facility *facility);
+void activate_log_facility(struct per_client_logging *logClient, struct log_facility *facility);
+int register_log_facility(struct per_client_logging *logClient, struct log_facility *facility);
+int unregister_log_facility(struct per_client_logging *logClient, struct log_facility *facility);
+int activate_custom_log_facility(struct per_client_logging *logClient, struct log_facility *facility);
+void set_const_log_str(struct per_client_logging *logClient);
+
+
+/* Did not find any code which was using this definition. Hence did not change. */
 #define ReturnLevelComponent(component) LogComponents[component].comp_log_level
 
-extern log_component_info
-	__attribute__ ((__unused__)) LogComponents[COMPONENT_COUNT];
+/*extern log_component_info
+	__attribute__ ((__unused__)) LogComponents[COMPONENT_COUNT];  */
+	
+/* Define clientIP */
+extern pthread_key_t 
+    __attribute__ ((__unused__)) clientIP;
+
 
 #define LogAlways(component, format, args...) \
 	do { \
-		if (likely(LogComponents[component].comp_log_level \
+        struct per_client_logging *logClient = pthread_getspecific(clientIP); \
+		if (likely(logClient->LogComponents[component].comp_log_level \
 		    <= NIV_FULL_DEBUG)) \
 			DisplayLogComponentLevel(component, (char *) __FILE__, \
 						 __LINE__, \
@@ -444,13 +546,15 @@ extern log_component_info
 	} while (0)
 
 #define LogTest(format, args...) \
+    struct per_client_logging *logClient = pthread_getspecific(clientIP); \
 	DisplayLogComponentLevel(COMPONENT_ALL, (char *) __FILE__, \
 				 __LINE__,  (char *) __func__, \
 				 NIV_NULL, format, ## args)
 
 #define LogFatal(component, format, args...) \
 	do { \
-		if (likely(LogComponents[component].comp_log_level \
+	    struct per_client_logging *logClient = pthread_getspecific(clientIP); \
+		if (likely(logClient->LogComponents[component].comp_log_level \
 		    >= NIV_FATAL)) \
 			DisplayLogComponentLevel(component, (char *) __FILE__, \
 						 __LINE__, \
@@ -460,7 +564,8 @@ extern log_component_info
 
 #define LogMajor(component, format, args...) \
 	do { \
-		if (likely(LogComponents[component].comp_log_level \
+	    struct per_client_logging *logClient = pthread_getspecific(clientIP); \
+		if (likely(logClient->LogComponents[component].comp_log_level \
 		    >= NIV_MAJOR)) \
 			DisplayLogComponentLevel(component, (char *) __FILE__, \
 						 __LINE__, \
@@ -470,7 +575,8 @@ extern log_component_info
 
 #define LogCrit(component, format, args...) \
 	do { \
-		if (likely(LogComponents[component].comp_log_level \
+	    struct per_client_logging *logClient = pthread_getspecific(clientIP); \
+		if (likely(logClient->LogComponents[component].comp_log_level \
 		    >= NIV_CRIT)) \
 			DisplayLogComponentLevel(component, (char *) __FILE__, \
 						 __LINE__, \
@@ -480,7 +586,8 @@ extern log_component_info
 
 #define LogWarn(component, format, args...) \
 	do { \
-		if (likely(LogComponents[component].comp_log_level \
+	    struct per_client_logging *logClient = pthread_getspecific(clientIP); \
+		if (likely(logClient->LogComponents[component].comp_log_level \
 		    >= NIV_WARN)) \
 			DisplayLogComponentLevel(component, (char *) __FILE__, \
 						 __LINE__, \
@@ -490,7 +597,8 @@ extern log_component_info
 
 #define LogEvent(component, format, args...) \
 	do { \
-		if (likely(LogComponents[component].comp_log_level \
+	    struct per_client_logging *logClient = pthread_getspecific(clientIP); \
+		if (likely(logClient->LogComponents[component].comp_log_level \
 		    >= NIV_EVENT)) \
 			DisplayLogComponentLevel(component, (char *) __FILE__,\
 						 __LINE__, \
@@ -500,7 +608,8 @@ extern log_component_info
 
 #define LogInfo(component, format, args...) \
 	do { \
-		if (unlikely(LogComponents[component].comp_log_level \
+	    struct per_client_logging *logClient = pthread_getspecific(clientIP); \
+		if (unlikely(logClient->LogComponents[component].comp_log_level \
 		    >= NIV_INFO)) \
 			DisplayLogComponentLevel(component, (char *) __FILE__,\
 						 __LINE__, \
@@ -510,7 +619,8 @@ extern log_component_info
 
 #define LogDebug(component, format, args...) \
 	do { \
-		if (unlikely(LogComponents[component].comp_log_level \
+	    struct per_client_logging *logClient = pthread_getspecific(clientIP); \
+		if (unlikely(logClient->LogComponents[component].comp_log_level \
 		    >= NIV_DEBUG)) \
 			DisplayLogComponentLevel(component, (char *) __FILE__,\
 						 __LINE__, \
@@ -520,7 +630,8 @@ extern log_component_info
 
 #define LogMidDebug(component, format, args...) \
 	do { \
-		if (unlikely(LogComponents[component].comp_log_level \
+	    struct per_client_logging *logClient = pthread_getspecific(clientIP); \
+		if (unlikely(logClient->LogComponents[component].comp_log_level \
 		    >= NIV_MID_DEBUG)) \
 			DisplayLogComponentLevel(component, (char *) __FILE__,\
 						 __LINE__, \
@@ -531,7 +642,8 @@ extern log_component_info
 
 #define LogFullDebug(component, format, args...) \
 	do { \
-		if (unlikely(LogComponents[component].comp_log_level \
+	    struct per_client_logging *logClient = pthread_getspecific(clientIP); \
+		if (unlikely(logClient->LogComponents[component].comp_log_level \
 		    >= NIV_FULL_DEBUG)) \
 			DisplayLogComponentLevel(component, (char *) __FILE__,\
 						 __LINE__, \
@@ -543,7 +655,8 @@ extern log_component_info
 #define \
 LogFullDebugOpaque(component, format, buf_size, value, length, args...) \
 	do { \
-		if (unlikely(LogComponents[component].comp_log_level \
+	    struct per_client_logging *logClient = pthread_getspecific(clientIP); \
+		if (unlikely(logClient->LogComponents[component].comp_log_level \
 		    >= NIV_FULL_DEBUG)) { \
 			char buf[buf_size]; \
 			struct display_buffer dspbuf = {buf_size, buf, buf}; \
@@ -560,7 +673,8 @@ LogFullDebugOpaque(component, format, buf_size, value, length, args...) \
 
 #define LogFullDebugBytes(component, format, buf_size, value, length, args...) \
 	do { \
-		if (unlikely(LogComponents[component].comp_log_level \
+	    struct per_client_logging *logClient = pthread_getspecific(clientIP); \
+		if (unlikely(logClient->LogComponents[component].comp_log_level \
 		    >= NIV_FULL_DEBUG)) { \
 			char buf[buf_size]; \
 			struct display_buffer dspbuf = {buf_size, buf, buf}; \
@@ -577,7 +691,8 @@ LogFullDebugOpaque(component, format, buf_size, value, length, args...) \
 
 #define LogAtLevel(component, level, format, args...) \
 	do { \
-		if (unlikely(LogComponents[component].comp_log_level \
+	    struct per_client_logging *logClient = pthread_getspecific(clientIP); \
+		if (unlikely(logClient->LogComponents[component].comp_log_level \
 		    >= level)) \
 			DisplayLogComponentLevel(component, (char *) __FILE__,\
 						 __LINE__, \
@@ -587,7 +702,8 @@ LogFullDebugOpaque(component, format, buf_size, value, length, args...) \
 
 #define LogError(component, a, b, c) \
 	do { \
-		if (unlikely(LogComponents[component].comp_log_level \
+	    struct per_client_logging *logClient = pthread_getspecific(clientIP); \
+		if (unlikely(logClient->LogComponents[component].comp_log_level \
 		    >= NIV_CRIT)) \
 			DisplayErrorComponentLogLine(component, \
 						     (char *) __FILE__, \
@@ -596,32 +712,78 @@ LogFullDebugOpaque(component, format, buf_size, value, length, args...) \
 						     a, b, c); \
 	} while (0)
 
+/*
 #define isLevel(component, level) \
-	(unlikely(LogComponents[component].comp_log_level >= level))
+    do { \
+        struct per_client_logging *client = pthread_getspecific(clientIP); \
+	    (unlikely(client->LogComponents[component].comp_log_level >= level)); \
+	} while(0)
+
 
 #define isInfo(component) \
-	(unlikely(LogComponents[component].comp_log_level >= NIV_INFO))
-
+    do { \
+        struct per_client_logging *client = pthread_getspecific(clientIP); \
+	    (unlikely(client->LogComponents[component].comp_log_level >= NIV_INFO)); \
+    } while(0)
+    
 #define isDebug(component) \
-	(unlikely(LogComponents[component].comp_log_level >= NIV_DEBUG))
+    do { \
+        struct per_client_logging *client = pthread_getspecific(clientIP); \
+	    (unlikely(client->LogComponents[component].comp_log_level >= NIV_DEBUG)); \
+	} while(0)
 
 #define isMidDebug(component) \
-	(unlikely(LogComponents[component].comp_log_level >= NIV_MID_DEBUG))
+    do { \
+        struct per_client_logging *client = pthread_getspecific(clientIP); \
+	    (unlikely(client->LogComponents[component].comp_log_level >= NIV_MID_DEBUG)); \
+	} while(0)
 
 #define isFullDebug(component) \
-	(unlikely(LogComponents[component].comp_log_level >= NIV_FULL_DEBUG))
+    do { \
+        struct per_client_logging *client = pthread_getspecific(clientIP); \
+	    (unlikely(client->LogComponents[component].comp_log_level >= NIV_FULL_DEBUG)); \
+	} while(0)   */
+
+static inline int isLevel(log_components_t component, log_levels_t level) {
+        struct per_client_logging *logClient = pthread_getspecific(clientIP);
+        return (unlikely(logClient->LogComponents[component].comp_log_level >= level));
+}
+
+static inline int isInfo(log_components_t component) {
+        struct per_client_logging *logClient = pthread_getspecific(clientIP);
+        return (unlikely(logClient->LogComponents[component].comp_log_level >= NIV_INFO));
+}
+
+	
+static inline int isDebug(log_components_t component) {
+        struct per_client_logging *logClient = pthread_getspecific(clientIP);
+        return (unlikely(logClient->LogComponents[component].comp_log_level >= NIV_DEBUG));
+}
+
+
+static inline int isMidDebug(log_components_t component) {
+        struct per_client_logging *logClient = pthread_getspecific(clientIP);
+        return (unlikely(logClient->LogComponents[component].comp_log_level >= NIV_MID_DEBUG));
+}
+
+static inline int isFullDebug(log_components_t component) {
+       struct per_client_logging *logClient = pthread_getspecific(clientIP);
+       return (unlikely(logClient->LogComponents[component].comp_log_level >= NIV_FULL_DEBUG));
+}
+
 
 /* Use either the first component, or if it is not at least at level,
  * use the second component.
  */
 #define LogDebugAlt(comp1, comp2, format, args...) \
 	do { \
-		if (unlikely(LogComponents[comp1].comp_log_level \
+	    struct per_client_logging *logClient = pthread_getspecific(clientIP); \
+		if (unlikely(logClient->LogComponents[comp1].comp_log_level \
 		    >= NIV_DEBUG) || \
-		    unlikely(LogComponents[comp2].comp_log_level \
+		    unlikely(logClient->LogComponents[comp2].comp_log_level \
 		    >= NIV_DEBUG)) { \
 			log_components_t component = \
-			    LogComponents[comp1].comp_log_level \
+			    logClient->LogComponents[comp1].comp_log_level \
 				>= NIV_DEBUG ? comp1 : comp2; \
 			\
 			DisplayLogComponentLevel(component, (char *) __FILE__, \
@@ -629,19 +791,20 @@ LogFullDebugOpaque(component, format, buf_size, value, length, args...) \
 						 (char *)__func__, \
 						 NIV_DEBUG, \
 						 "%s: DEBUG: " format, \
-						 LogComponents[component] \
+						 logClient->LogComponents[component] \
 						     .comp_str, ## args); \
 		} \
 	} while (0)
 
 #define LogMidDebugAlt(comp1, comp2, format, args...) \
 	do { \
-		if (unlikely(LogComponents[comp1].comp_log_level \
+	    struct per_client_logging *logClient = pthread_getspecific(clientIP); \
+		if (unlikely(logClient->LogComponents[comp1].comp_log_level \
 		    >= NIV_MID_DEBUG) || \
-		    unlikely(LogComponents[comp2].comp_log_level \
+		    unlikely(logClient->LogComponents[comp2].comp_log_level \
 		    >= NIV_MID_DEBUG)) { \
 			log_components_t component = \
-			    LogComponents[comp1].comp_log_level \
+			    logClient->LogComponents[comp1].comp_log_level \
 				>= NIV_MID_DEBUG ? comp1 : comp2; \
 			\
 			DisplayLogComponentLevel(component, (char *) __FILE__, \
@@ -649,19 +812,20 @@ LogFullDebugOpaque(component, format, buf_size, value, length, args...) \
 						 (char *)__func__, \
 						 NIV_MID_DEBUG, \
 						 "%s: MID DEBUG: " format, \
-						 LogComponents[component] \
+						 logClient->LogComponents[component] \
 						     .comp_str, ## args); \
 		} \
 	} while (0)
 
 #define LogFullDebugAlt(comp1, comp2, format, args...) \
 	do { \
-		if (unlikely(LogComponents[comp1].comp_log_level \
+	    struct per_client_logging *logClient = pthread_getspecific(clientIP); \
+		if (unlikely(logClient->LogComponents[comp1].comp_log_level \
 		    >= NIV_FULL_DEBUG) || \
-		    unlikely(LogComponents[comp2].comp_log_level \
+		    unlikely(logClient->LogComponents[comp2].comp_log_level \
 		    >= NIV_FULL_DEBUG)) { \
 			log_components_t component = \
-			    LogComponents[comp1].comp_log_level \
+			    logClient->LogComponents[comp1].comp_log_level \
 				>= NIV_FULL_DEBUG ? comp1 : comp2; \
 			\
 			DisplayLogComponentLevel(component, (char *) __FILE__, \
@@ -669,7 +833,7 @@ LogFullDebugOpaque(component, format, buf_size, value, length, args...) \
 						 (char *)__func__, \
 						 NIV_FULL_DEBUG, \
 						 "%s: FULLDEBUG: " format, \
-						 LogComponents[component] \
+						 logClient->LogComponents[component] \
 						     .comp_str, ## args); \
 		} \
 	} while (0)

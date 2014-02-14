@@ -1,4 +1,4 @@
-/*
+c/*
  * vim:noexpandtab:shiftwidth=8:tabstop=8:
  *
  * Copyright CEA/DAM/DIF  (2008)

@@ -721,6 +721,43 @@ static void nfs_rpc_execute(request_data_t *req,
 	enum auth_stat auth_rc;
 	bool slocked = false;
 	const char *progname = "unknown";
+	int hash, ret;
+	unsigned char buf[sizeof(struct in6_addr)];
+	char ip[INET6_ADDRSTRLEN];
+	
+	if (inet_ntop(AF_INET, worker_data->hostaddr, ip, INET6_ADDRSTRLEN)== NULL) {
+		// Log:- Failed t
+
+
+	/* first get the client ip from the request 
+	 * More likely that we have a IPV4 address. */
+	if (worker_data->hostaddr.ss_family == AF_INET)
+		hash = calculate_hash((struct sockaddr_in *)worker_data->hostaddr);
+	else
+		hash = calculate_hash((struct sockaddr_in6 *)worker_data->hostaddr);
+
+	struct per_client_logging  *client_node =  client_hash[hash];
+	if (client_node == NULL) {
+		// This means this client is not being traced.
+		// Set the ip to default node. 
+		client_node = client_hash[0];
+	} 
+	else {
+		// This means we have a client which is being traced. 
+		// Now check if the node assigned is the correct node.
+		while(!strncmp(client_node->ip, ip, sizeof(ip)))
+			client_node = client_node->collision_next;
+	}
+	
+	if (client_node == NULL) 
+		/* we traversed the entire collision list.
+		 * We don't have a valid pointer. This means
+		 * the client is not being traced. Return the pointer to LOG. */
+		client_node = client_hash[0];
+
+	// Now client_node pointer holds the correct pointer to the node.
+	// TODO:  Set this IP in thread context ?! Would that help ?!		
+ 	pthread_setspecific(clientIP, client_node);	
 
 	/* Initialize permissions to allow nothing */
 	export_perms.options = 0;
@@ -1133,9 +1170,7 @@ static void nfs_rpc_execute(request_data_t *req,
 
 	/* Get user credentials */
 	if (reqnfs->funcdesc->dispatch_behaviour & NEEDS_CRED) {
-		if (get_req_uid_gid(svcreq,
-				    &user_credentials,
-				    &export_perms) == false) {
+		if (get_req_uid_gid(svcreq, &user_credentials, &export_perms) == false) {
 			LogInfo(COMPONENT_DISPATCH,
 				"could not get uid and gid, rejecting client %s",
 				req_ctx.client->hostaddr_str);
@@ -1256,9 +1291,9 @@ static void nfs_rpc_execute(request_data_t *req,
 							res_nfs);
 	}
 
-	/* If Manage_gids is used, unref the group list */
-	if (export_perms.options & EXPORT_OPTION_MANAGE_GIDS)
-		uid2grp_unref(user_credentials.caller_uid);
+        /* If Manage_gids is used, unref the group list */
+        if (export_perms.options & EXPORT_OPTION_MANAGE_GIDS)
+                uid2grp_unref(user_credentials.caller_uid);
  req_error:
 
 #ifdef USE_DBUS_STATS
